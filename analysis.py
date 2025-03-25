@@ -6,11 +6,20 @@ import igraph
 import matplotlib as mpl
 
 def prepare_network(mf, cf, nf, display = False):
+    """
+    arguments: 
+        mf: str         file (.shp) -- read
+        cf: str         file (.csv) -- read
+        nf: str         network file (pickle) -- write
+        display: bool   enables plotting graphs
+    """
+    
     shapefile = gpd.read_file(mf) ## read map
     chargedata = pd.read_csv(cf)  ## read charger info
     
     """ ### show data """
     if display:
+        ## shows map of the roads
         for l in shapefile.geometry:
             _ = plt.plot(*l.coords.xy)
         
@@ -38,15 +47,23 @@ def prepare_network(mf, cf, nf, display = False):
     lengths = []
     ids = []
     for l in shapefile.geometry:
+        ## cycle through the roads
+        
         xy = l.coords.xy
         dists = [0]
         dists.extend(np.cumsum((np.diff(xy, axis=1)**2).sum(axis=0)**0.5))
+        ## going through the road, we calculate eacch point's distance from the road's origin 
+        ##      by cumulatively summing the distance found with pythagoras theorem
         
         match_ind = []
         
         for i in range(len(chargedata)):
+            ## check if any chargers are on this road
+            
             if i in matches:
+                ## skip, already assigned to another road
                 continue
+                
             cx = chargedata["X"][i]
             cy = chargedata["Y"][i]
             d = ((xy[0]-cx)**2 + (xy[1]-cy)**2)**0.5
@@ -54,11 +71,14 @@ def prepare_network(mf, cf, nf, display = False):
             if np.any(d<50): ## allow 50m tolerance when assigning charger to road
                 # matches.append([i, len(starts)])
                 matches.append(i)
-                match_ind.append((d.tolist().index(d.min()), i))
+                match_ind.append((d.tolist().index(d.min()), i)) ## still match to closest point
                 # print(i, len(starts))
                 
         prevd = 0
-        match_ind = sorted(match_ind)
+        match_ind = sorted(match_ind) 
+        ## will sort using the first element, ie distance from the street's origin
+        
+        ## now add the street's start and endpoints to the global list, but making sure to break the road into segments where we have chargers
         s = [[xy[0][0], xy[1][0], False]]
         e = []
         for i in range(len(match_ind)):
@@ -85,7 +105,6 @@ def prepare_network(mf, cf, nf, display = False):
     # print(len(starts), len(node_list))
     edges = []
     for i in range(len(starts)):
-        ## find "real" edge length by summing length of the shape line segments, save somewhere
         edges.append([node_list.index(starts[i]), node_list.index(ends[i])])
     
     node_locations = [[i[0],i[1]] for i in node_list]
@@ -100,7 +119,7 @@ def prepare_network(mf, cf, nf, display = False):
     if display:
         colors = ["red", "blue"]
         layout = igraph.Layout(node_locations)
-        layout.mirror(1)
+        layout.mirror(1) ## puts the origin on bottom-left corner as expected in the map 
         pl = igraph.plot(graph, layout=layout,
                         vertex_size = [10 if i else 5 for i in node_is_charger],
                         vertex_color = [colors[int(i)] for i in node_is_charger])
@@ -109,6 +128,12 @@ def prepare_network(mf, cf, nf, display = False):
 
 
 def set_distance_info(nf, nf2, display = False):
+    """
+    arguments:
+        nf: str         network file (pickle) -- read
+        nf2: str        network file with distances (pickle) -- write
+        display: bool   enables plotting graphs
+    """
     graph = igraph.Graph.Read_Pickle(nf)
     graph.vs.set_attribute_values("distance", [float("inf") for i in range(len(graph.vs))])
     for i in range(len(graph.vs)):
@@ -159,7 +184,15 @@ def set_distance_info(nf, nf2, display = False):
         pl.save("prova_dist.png")
     
 
-def analyze(mf,nf, display = False):
+def analyze(mf,nf,pf, display = False):
+    """
+    arguments:
+        mf: str         map file (.shp) -- read
+        nf: str         network file with distances (pickle) -- read
+        pf: str         points file (.csv) -- write
+        display: bool   enables plotting graphs
+    """
+    
     graph = igraph.Graph.Read_Pickle(nf)
     shapefile = gpd.read_file(mf)
     
@@ -221,6 +254,7 @@ def analyze(mf,nf, display = False):
     locs = (np.array(graph.vs["locations"])[np.logical_not(np.isinf(graph.vs["distance"]))]).tolist()
     scale = 500 ## space scale
     for e in graph.es:
+        ## for every road, split into <scale> length segments and find distance at those points
         sd = graph.vs[e.source]["distance"]
         td = graph.vs[e.target]["distance"]
         l = e["weight"]
@@ -245,6 +279,7 @@ def analyze(mf,nf, display = False):
             x = (i+1)*scale
             dists.append(min(sd + x, td + (l-x)))
             if shape is not None:
+                ## find approximate location of points 
                 ind = (shplen>x).tolist().index(False)-1
                 rl = x-shplen[ind]
                 tl = shplen[ind+1]-shplen[ind]
@@ -259,13 +294,14 @@ def analyze(mf,nf, display = False):
         plt.xlabel("distance (m)")
         plt.title("Distribution of distances using points every "+str(scale)+"m on each road")
         plt.show()
-        
-        dists_s = pd.Series(dists)
-        dists_s.name = "distance"
-        dists_s.to_csv("distance.csv")
-        
+    
+    """
+    dists_s = pd.Series(dists)
+    dists_s.name = "distance"
+    dists_s.to_csv("distance.csv")
+    """
     data = pd.DataFrame([dists,[loc[0] for loc in locs],[loc[1] for loc in locs]], ["dists", "X","Y"]).transpose()
-    data.to_csv("points.csv")
+    data.to_csv(pf)
 
 if __name__=="__main__":
     data_folder = "../dati_trentino/"
@@ -274,10 +310,11 @@ if __name__=="__main__":
     chargers = "colonnine_trentino_xy.csv"
     savefile = "trentino_graph"
     save_dist = "trentino_graph_dists"
+    points = "points.csv"
     
     # prepare_network(data_folder + roads, data_folder + chargers, data_folder + savefile)
     # print("network prepared")
     # set_distance_info(data_folder + savefile, data_folder + save_dist)
     # print("distances set")
-    analyze(data_folder + roads, data_folder + save_dist)
+    analyze(data_folder + roads, data_folder + save_dist, data_folder + points)
     
